@@ -13,6 +13,7 @@ const map = new mapboxgl.Map({
 });
 
 let timeFilter = -1;
+let stationFlow = d3.scaleQuantize().domain([0, 1]).range([0, 0.5, 1]);
 
 function computeStationTraffic(stations, trips) {
   const departures = d3.rollup(
@@ -116,22 +117,28 @@ map.on('load', async () => {
       .domain([0, d3.max(stations, d => d.totalTraffic)])
       .range([0, 25]);
 
+    // initial draw
     const circles = svg
-      .selectAll('circle')
-      .data(stations, d => d.short_name)
-      .enter()
-      .append('circle')
-        .attr('cx',        d => getCoords(d).cx)
-        .attr('cy',        d => getCoords(d).cy)
-        .attr('r',         d => radiusScale(d.totalTraffic))
-        .attr('fill',      'steelblue')
-        .attr('stroke',    'white')
-        .attr('stroke-width', 1)
-        .attr('opacity',   0.8)
-      .append('title')
-        .text(d =>
-          `${d.totalTraffic} trips (${d.departures} departures, ${d.arrivals} arrivals)`
+    .selectAll('circle')
+    .data(stations, d => d.short_name)
+    .enter()
+    .append('circle')
+        .attr('cx', d => getCoords(d).cx)
+        .attr('cy', d => getCoords(d).cy)
+        .attr('r',  d => radiusScale(d.totalTraffic))
+        .style('--departure-ratio', d =>
+        stationFlow(d.totalTraffic
+            ? d.departures / d.totalTraffic
+            : 0
+        )
         );
+
+    circles
+    .append('title')
+    .text(d =>
+        `${d.totalTraffic} trips (${d.departures} departures, ${d.arrivals} arrivals)`
+    );
+
 
     function updatePositions() {
       svg.selectAll('circle')
@@ -158,12 +165,17 @@ map.on('load', async () => {
       const filteredStations = computeStationTraffic(stations, filteredTrips);
 
       svg.selectAll('circle')
-        .data(filteredStations, d => d.short_name)
-        .join('circle')
-          .attr('cx', d => getCoords(d).cx)
-          .attr('cy', d => getCoords(d).cy)
-          .attr('r',  d => radiusScale(d.totalTraffic));
-    }
+    .data(filteredStations, d => d.short_name)
+    .join('circle')
+        .attr('cx', d => getCoords(d).cx)
+        .attr('cy', d => getCoords(d).cy)
+        .attr('r',  d => radiusScale(d.totalTraffic))
+        .style('--departure-ratio', d =>
+        stationFlow(d.totalTraffic
+            ? d.departures / d.totalTraffic
+            : 0
+        )
+        )};
 
     function updateTimeDisplay() {
       timeFilter = Number(timeSlider.value);

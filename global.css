@@ -35,12 +35,21 @@ body {
   pointer-events: none;
 }
 
-#map svg circle {
+#map svg circle, 
+.legend > div {
   fill: steelblue;
   fill-opacity: 0.6;
   stroke: white;
   stroke-width: 1;
-  pointer-events: auto; 
+  pointer-events: auto;
+  --color-departures: steelblue;
+  --color-arrivals: darkorange;
+  --color: color-mix(
+  in oklch,
+  var(--color-departures) calc(100% * var(--departure-ratio)),
+  var(--color-arrivals)
+);
+fill: var(--color); 
 }
 
 .slider-wrap {
@@ -68,4 +77,29 @@ body {
 #time-slider {
   width: 250px;
   margin-top: 0.25em;
+}
+
+.legend {
+  display: flex;
+  gap: 2em;
+  margin-block: 1em;
+  align-items: center;
+}
+
+.legend > div {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  font-size: 0.9em;
+  color: #333;
+}
+
+.legend > div::before {
+  content: "";
+  width: 1em;
+  height: 1em;
+  border-radius: 50%; 
+  background: var(--color);
+  border: 1px solid #ccc;
+  flex-shrink: 0;
 }
