@@ -12,10 +12,53 @@ const map = new mapboxgl.Map({
   maxZoom: 18,
 });
 
-// Global helper function as per instructions
+let timeFilter = -1;
+
+function computeStationTraffic(stations, trips) {
+  const departures = d3.rollup(
+    trips,
+    v => v.length,
+    d => d.start_station_id
+  );
+  const arrivals = d3.rollup(
+    trips,
+    v => v.length,
+    d => d.end_station_id
+  );
+
+  return stations.map(station => {
+    const id = station.short_name;
+    station.departures   = departures.get(id) ?? 0;
+    station.arrivals     = arrivals.get(id)   ?? 0;
+    station.totalTraffic = station.departures + station.arrivals;
+    return station;
+  });
+}
+
+function minutesSinceMidnight(date) {
+  return date.getHours() * 60 + date.getMinutes();
+}
+
+function filterTripsByTime(trips, timeFilter) {
+  if (timeFilter === -1) return trips;
+  return trips.filter(trip => {
+    const startM = minutesSinceMidnight(trip.started_at);
+    const endM   = minutesSinceMidnight(trip.ended_at);
+    return (
+      Math.abs(startM - timeFilter) <= 60 ||
+      Math.abs(endM   - timeFilter) <= 60
+    );
+  });
+}
+
+function formatTime(minutes) {
+  const d = new Date(0, 0, 0, 0, minutes);
+  return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+}
+
 function getCoords(station) {
-  const point = new mapboxgl.LngLat(+station.lon, +station.lat);
-  const { x, y } = map.project(point);
+  const p = new mapboxgl.LngLat(+station.lon, +station.lat);
+  const { x, y } = map.project(p);
   return { cx: x, cy: y };
 }
 
@@ -50,80 +93,96 @@ map.on('load', async () => {
     },
   });
 
-  // Select existing svg inside #map
   const svg = d3.select('#map').select('svg');
 
   try {
-    // Step 3.1: Load stations JSON
     const jsonurl = 'https://dsc106.com/labs/lab07/data/bluebikes-stations.json';
     const jsonData = await d3.json(jsonurl);
-    console.log('Loaded JSON Data:', jsonData);
-
     let stations = jsonData.data.stations;
-    console.log('Stations Array:', stations);
 
-    // Step 4.1: Load trips CSV
-    const trips = await d3.csv('https://dsc106.com/labs/lab07/data/bluebikes-traffic-2024-03.csv');
-    console.log('Trips:', trips);
+    const trips = await d3.csv(
+      'https://dsc106.com/labs/lab07/data/bluebikes-traffic-2024-03.csv',
+      d => {
+        d.started_at = new Date(d.started_at);
+        d.ended_at   = new Date(d.ended_at);
+        return d;
+      }
+    );
 
-    // Step 4.2: Calculate departures and arrivals
-    const departures = d3.rollup(trips, v => v.length, d => d.start_station_id);
-    const arrivals = d3.rollup(trips, v => v.length, d => d.end_station_id);
+    stations = computeStationTraffic(stations, trips);
 
-    stations = stations.map((station) => {
-      let id = station.short_name;
-      station.arrivals = arrivals.get(id) ?? 0;
-      station.departures = departures.get(id) ?? 0;
-      station.totalTraffic = station.arrivals + station.departures;
-      return station;
-    });
-
-    console.log('Stations with traffic:', stations);
-
-    // Step 3.3: Append circles to the SVG
-    const circles = svg
-      .selectAll('circle')
-      .data(stations)
-      .enter()
-      .append('circle')
-      .attr('fill', 'steelblue')
-      .attr('stroke', 'white')
-      .attr('stroke-width', 1)
-      .attr('opacity', 0.8);
-
-    // Step 4.3: Create square root scale
     const radiusScale = d3
       .scaleSqrt()
-      .domain([0, d3.max(stations, (d) => d.totalTraffic)])
+      .domain([0, d3.max(stations, d => d.totalTraffic)])
       .range([0, 25]);
 
-    // Set radius using traffic
-    circles.attr('r', (d) => radiusScale(d.totalTraffic));
+    const circles = svg
+      .selectAll('circle')
+      .data(stations, d => d.short_name)
+      .enter()
+      .append('circle')
+        .attr('cx',        d => getCoords(d).cx)
+        .attr('cy',        d => getCoords(d).cy)
+        .attr('r',         d => radiusScale(d.totalTraffic))
+        .attr('fill',      'steelblue')
+        .attr('stroke',    'white')
+        .attr('stroke-width', 1)
+        .attr('opacity',   0.8)
+      .append('title')
+        .text(d =>
+          `${d.totalTraffic} trips (${d.departures} departures, ${d.arrivals} arrivals)`
+        );
 
-    // Step 4.4: Add tooltips
-    circles.each(function (d) {
-      d3.select(this)
-        .append('title')
-        .text(`${d.totalTraffic} trips (${d.departures} departures, ${d.arrivals} arrivals)`);
-    });
-
-    // Function to update positions on the map
     function updatePositions() {
-      circles
-        .attr('cx', (d) => getCoords(d).cx)
-        .attr('cy', (d) => getCoords(d).cy);
+      svg.selectAll('circle')
+        .attr('cx', d => getCoords(d).cx)
+        .attr('cy', d => getCoords(d).cy);
+    }
+    map.on('move',     updatePositions);
+    map.on('zoom',     updatePositions);
+    map.on('resize',   updatePositions);
+    map.on('moveend',  updatePositions);
+
+    const timeSlider   = document.getElementById('time-slider');
+    const selectedTime = document.getElementById('time-display');
+    const anyTimeLabel = document.getElementById('anytime');
+
+    function updateScatterPlot(tf) {
+      if (tf === -1) {
+        radiusScale.range([0, 25]);
+      } else {
+        radiusScale.range([3, 50]);
+      }
+
+      const filteredTrips    = filterTripsByTime(trips, tf);
+      const filteredStations = computeStationTraffic(stations, filteredTrips);
+
+      svg.selectAll('circle')
+        .data(filteredStations, d => d.short_name)
+        .join('circle')
+          .attr('cx', d => getCoords(d).cx)
+          .attr('cy', d => getCoords(d).cy)
+          .attr('r',  d => radiusScale(d.totalTraffic));
     }
 
-    // Initial update
-    updatePositions();
+    function updateTimeDisplay() {
+      timeFilter = Number(timeSlider.value);
 
-    // Listen to map events and update positions
-    map.on('move', updatePositions);
-    map.on('zoom', updatePositions);
-    map.on('resize', updatePositions);
-    map.on('moveend', updatePositions);
+      if (timeFilter === -1) {
+        selectedTime.textContent = '';
+        anyTimeLabel.style.display = 'block';
+      } else {
+        selectedTime.textContent = formatTime(timeFilter);
+        anyTimeLabel.style.display = 'none';
+      }
+
+      updateScatterPlot(timeFilter);
+    }
+
+    timeSlider.addEventListener('input', updateTimeDisplay);
+    updateTimeDisplay();
 
   } catch (error) {
-    console.error('Error loading data:', error);
+    console.error('Error loading or processing data:', error);
   }
 });
